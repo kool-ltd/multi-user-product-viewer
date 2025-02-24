@@ -57,6 +57,13 @@ io.on('connection', (socket) => {
 });
 
 const port = process.env.PORT || 3000;
+
+http.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${port} is already in use. Trying another port...`);
+  }
+});
+
 http.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
