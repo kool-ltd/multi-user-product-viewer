@@ -17,12 +17,22 @@ class App {
         this.interactionManager = new InteractionManager(
             this.sceneManager.scene,
             this.sceneManager.camera,
+            this.sceneManager.renderer, // Note: passing renderer here is important
             this.container
         );
 
         this.init();
         this.setupEventListeners();
         this.animate();
+
+        // Add these XR session event listeners
+        this.sceneManager.renderer.xr.addEventListener('sessionstart', () => {
+            this.interactionManager.onXRSessionStart();
+        });
+
+        this.sceneManager.renderer.xr.addEventListener('sessionend', () => {
+            this.interactionManager.onXRSessionEnd();
+        });
     }
 
     async init() {
@@ -36,7 +46,11 @@ class App {
 
         // Setup XR
         document.body.appendChild(VRButton.createButton(this.sceneManager.renderer));
-        document.body.appendChild(ARButton.createButton(this.sceneManager.renderer));
+        document.body.appendChild(ARButton.createButton(this.sceneManager.renderer, {
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['dom-overlay'],
+            domOverlay: { root: document.body }
+        }));
     }
 
     async loadDefaultProduct() {
@@ -50,6 +64,8 @@ class App {
         for (const part of parts) {
             await this.productManager.loadPart(`assets/${part}`);
         }
+        this.interactionManager.setDraggableObjects(this.productManager.getParts());
+
     }
 
     setupEventListeners() {
@@ -81,6 +97,8 @@ class App {
             this.sceneManager.render();
         });
     }
+
+
 }
 
 // Start the application

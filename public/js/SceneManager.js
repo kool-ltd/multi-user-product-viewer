@@ -25,13 +25,23 @@ export class SceneManager {
     }
 
     setupRenderer() {
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            alpha: true  // This is crucial for AR transparency
+        });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.xr.enabled = true;
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1;
         this.container.appendChild(this.renderer.domElement);
+        this.renderer.xr.addEventListener('sessionstart', () => {
+            this.isARMode = true;
+            this.scene.background = null;
+            
+            // Ensure the renderer has the correct settings for AR
+            this.renderer.setClearColor(0x000000, 0); // Set clear color with 0 alpha
+        });
     }
 
     setupLights() {

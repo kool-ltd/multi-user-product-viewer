@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DragControls } from 'three/addons/controls/DragControls.js';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 class App {
     constructor() {
@@ -235,25 +236,90 @@ class App {
                 domOverlay: { root: document.body }
             });
             document.body.appendChild(arButton);
-
-            // Remove background when entering AR
+    
+            // Create controller rays and models before session starts
+            this.setupXRControllers();
+    
+            // Enhanced AR session handling
             this.renderer.xr.addEventListener('sessionstart', () => {
+                console.log("AR session started");
                 this.isARMode = true;
                 this.scene.background = null;
+                
+                // Critical for AR transparency
+                this.renderer.setClearColor(0x000000, 0);
+                
+                // Make controllers visible in AR
+                if (this.controller1) this.controller1.visible = true;
+                if (this.controller2) this.controller2.visible = true;
+                if (this.controllerGrip1) this.controllerGrip1.visible = true;
+                if (this.controllerGrip2) this.controllerGrip2.visible = true;
+                
                 if (this.isHost) {
                     this.socket.emit('ar-session-start');
                 }
             });
-
-            // Restore background when exiting AR
+    
             this.renderer.xr.addEventListener('sessionend', () => {
+                console.log("AR session ended");
                 this.isARMode = false;
                 this.scene.background = new THREE.Color(0xcccccc);
+                this.renderer.setClearColor(0xcccccc, 1);
+                
                 if (this.isHost) {
                     this.socket.emit('ar-session-end');
                 }
             });
         }
+    }
+
+    // Add these controller event handlers
+    onControllerSelectStart(event) {
+        if (!this.isARMode) return;
+        
+        const controller = event.target;
+        
+        // Position the interaction plane in front of the controller
+        const controllerWorldPos = new THREE.Vector3();
+        controller.getWorldPosition(controllerWorldPos);
+        
+        const controllerDirection = new THREE.Vector3(0, 0, -1);
+        controllerDirection.applyQuaternion(controller.quaternion);
+        controllerDirection.normalize();
+        
+        this.interactionPlane.position.copy(controllerWorldPos).add(
+            controllerDirection.multiplyScalar(0.5)
+        );
+        this.interactionPlane.quaternion.copy(controller.quaternion);
+        
+        // Create raycaster
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+        
+        // Find objects to interact with
+        const draggableObjects = Array.from(this.loadedModels.values());
+        const intersects = this.raycaster.intersectObjects(draggableObjects, true);
+        
+        if (intersects.length > 0) {
+            this.selectedObject = intersects[0].object;
+            this.activeController = controller;
+            this.initialObjectPosition = this.selectedObject.position.clone();
+            
+            // Find intersection with the plane
+            const planeIntersects = this.raycaster.intersectObject(this.interactionPlane);
+            if (planeIntersects.length > 0) {
+                this.lastIntersectionPoint = planeIntersects[0].point.clone();
+            }
+        }
+    }
+
+    onControllerSelectEnd() {
+        this.selectedObject = null;
+        this.activeController = null;
+        this.lastIntersectionPoint = null;
     }
 
     setupLights() {
@@ -523,6 +589,36 @@ class App {
 
     animate() {
         this.renderer.setAnimationLoop(() => {
+            // Handle controller-based dragging
+            if (this.selectedObject && this.activeController) {
+                // Get current controller position
+                const currentPosition = new THREE.Vector3();
+                currentPosition.setFromMatrixPosition(this.activeController.matrixWorld);
+                
+                // Calculate movement delta
+                const delta = new THREE.Vector3().subVectors(
+                    currentPosition, 
+                    this.lastControllerPosition
+                );
+                
+                // Apply movement to the selected object
+                this.selectedObject.position.add(delta);
+                
+                // Update last position
+                this.lastControllerPosition.copy(currentPosition);
+                
+                // Broadcast position changes if host
+                if (this.isHost) {
+                    this.socket.emit('model-transform', {
+                        id: this.selectedObject.uuid,
+                        position: this.selectedObject.position.toArray(),
+                        rotation: this.selectedObject.rotation.toArray(),
+                        scale: this.selectedObject.scale.toArray()
+                    });
+                }
+            }
+            
+            // Original AR camera update code
             if (this.isHost && this.isARMode) {
                 const arCameraState = {
                     position: this.camera.position.toArray(),
@@ -530,7 +626,8 @@ class App {
                 };
                 this.socket.emit('ar-camera-update', arCameraState);
             }
-
+    
+            // Update controls and render
             this.orbitControls.update();
             this.renderer.render(this.scene, this.camera);
         });
@@ -642,9 +739,165 @@ class App {
             arButton.style.left = 'auto';
             arButton.style.bottom = 'auto';
             controlsContainer.appendChild(arButton);
+            
+            // Add these event listeners to properly handle AR mode
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                this.isARMode = true;
+                this.scene.background = null;
+                // Make sure we set the renderer's clear color to be fully transparent
+                this.renderer.setClearColor(0x000000, 0);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-start');
+                }
+            });
+
+            this.renderer.xr.addEventListener('sessionend', () => {
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);
+                this.renderer.setClearColor(0xcccccc, 1);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-end');
+                }
+            });
         }
 
         document.body.appendChild(controlsContainer);
+    }
+
+    setupXRControllers() {
+        console.log("Setting up XR controllers");
+        
+        // Create controller rays (visible pointers)
+        const rayGeometry = new THREE.BufferGeometry();
+        rayGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, -10], 3));
+        
+        const rayMaterial = new THREE.LineBasicMaterial({
+            color: 0xFF0000,  // Bright red for visibility in AR
+            linewidth: 5      // Thicker line for better visibility
+        });
+        
+        // Create grip/controller model factory
+        const controllerModelFactory = new XRControllerModelFactory();
+        
+        // Controller 1
+        this.controller1 = this.renderer.xr.getController(0);
+        this.controller1.name = "controller-right";
+        this.scene.add(this.controller1);
+        
+        // Add visible ray to controller
+        const controllerRay1 = new THREE.Line(rayGeometry, rayMaterial);
+        controllerRay1.name = "controller-ray";
+        this.controller1.add(controllerRay1);
+        
+        // Add grip model
+        this.controllerGrip1 = this.renderer.xr.getControllerGrip(0);
+        this.controllerGrip1.add(controllerModelFactory.createControllerModel(this.controllerGrip1));
+        this.scene.add(this.controllerGrip1);
+        
+        // Controller 2
+        this.controller2 = this.renderer.xr.getController(1);
+        this.controller2.name = "controller-left";
+        this.scene.add(this.controller2);
+        
+        // Add visible ray to controller
+        const controllerRay2 = new THREE.Line(rayGeometry, rayMaterial);
+        controllerRay2.name = "controller-ray";
+        this.controller2.add(controllerRay2);
+        
+        // Add grip model
+        this.controllerGrip2 = this.renderer.xr.getControllerGrip(1);
+        this.controllerGrip2.add(controllerModelFactory.createControllerModel(this.controllerGrip2));
+        this.scene.add(this.controllerGrip2);
+        
+        // Add controller event listeners
+        this.controller1.addEventListener('selectstart', this.onControllerSelectStart.bind(this));
+        this.controller1.addEventListener('selectend', this.onControllerSelectEnd.bind(this));
+        this.controller2.addEventListener('selectstart', this.onControllerSelectStart.bind(this));
+        this.controller2.addEventListener('selectend', this.onControllerSelectEnd.bind(this));
+        
+        // Create raycaster and helper objects for controller interaction
+        this.raycaster = new THREE.Raycaster();
+        this.selectedObject = null;
+        this.activeController = null;
+        this.lastControllerPosition = new THREE.Vector3();
+        
+        console.log("XR controllers set up");
+    }
+    
+    // Add controller event handlers
+    onControllerSelectStart(event) {
+        console.log("Controller select start");
+        const controller = event.target;
+        
+        // Setup raycaster from controller
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+        
+        // Get all models as draggable objects
+        const draggableObjects = Array.from(this.loadedModels.values());
+        
+        // Find intersected objects
+        const intersects = this.raycaster.intersectObjects(draggableObjects, true);
+        console.log("Intersected objects:", intersects.length);
+        
+        if (intersects.length > 0) {
+            let targetObject = intersects[0].object;
+            
+            // Find the top-level model parent
+            while (targetObject.parent && !this.loadedModels.has(targetObject.name)) {
+                targetObject = targetObject.parent;
+                if (targetObject === this.scene) break;
+            }
+            
+            // Check if we found a valid model from our loadedModels
+            let isValidModel = false;
+            this.loadedModels.forEach((model) => {
+                if (model === targetObject) isValidModel = true;
+            });
+            
+            if (isValidModel) {
+                console.log("Selected model:", targetObject.name);
+                this.selectedObject = targetObject;
+                this.activeController = controller;
+                this.lastControllerPosition = new THREE.Vector3();
+                this.lastControllerPosition.setFromMatrixPosition(controller.matrixWorld);
+                
+                // Store initial positions
+                this.initialObjectPosition = targetObject.position.clone();
+                this.initialControllerPosition = this.lastControllerPosition.clone();
+                
+                // Visual feedback that object is selected
+                targetObject.userData.originalMaterials = [];
+                targetObject.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.userData.originalMaterial = child.material;
+                        // Create highlighted material
+                        child.material = child.material.clone();
+                        child.material.emissive = new THREE.Color(0x333333);
+                    }
+                });
+            }
+        }
+    }
+    
+    onControllerSelectEnd() {
+        console.log("Controller select end");
+        
+        if (this.selectedObject) {
+            // Restore original materials
+            this.selectedObject.traverse((child) => {
+                if (child.isMesh && child.userData.originalMaterial) {
+                    child.material = child.userData.originalMaterial;
+                    delete child.userData.originalMaterial;
+                }
+            });
+        }
+        
+        this.selectedObject = null;
+        this.activeController = null;
     }
 }
 
