@@ -5,6 +5,10 @@ import { DragControls } from 'three/addons/controls/DragControls.js';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { InteractionManager } from './InteractionManager.js';
+
+// If using sockets, make sure to include your socket.io client library on the page.
+const io = window.io;
 
 class App {
     constructor() {
@@ -13,14 +17,14 @@ class App {
         this.isARMode = false;
         this.socket = io();
 
-        // Setup host/viewer roles
+        // Setup host/viewer roles via URL parameter
         const urlParams = new URLSearchParams(window.location.search);
         this.isHost = urlParams.get('role') === 'host';
 
-        // Create a loading overlay on the page
+        // Create a loading overlay on the page.
         this.createLoadingOverlay();
 
-        // Setup the loading manager
+        // Setup the loading manager.
         this.loadingManager = new THREE.LoadingManager(() => {
             const overlay = document.getElementById('loading-overlay');
             if (overlay) {
@@ -35,7 +39,7 @@ class App {
             }
         };
 
-        // Create loaders with the loading manager
+        // Create loaders with the loading manager.
         this.gltfLoader = new GLTFLoader(this.loadingManager);
         this.rgbeLoader = new RGBELoader(this.loadingManager);
 
@@ -46,6 +50,14 @@ class App {
         this.setupInterface();
         this.setupSocketListeners();
 
+        // Create the interaction manager.
+        this.interactionManager = new InteractionManager(
+            this.scene,
+            this.camera,
+            this.renderer,
+            this.renderer.domElement
+        );
+
         if (this.isHost) {
             this.socket.emit('register-host');
         }
@@ -54,7 +66,7 @@ class App {
     }
 
     setupSocketListeners() {
-        // Host broadcasts updates
+        // Host broadcasts camera and model updates.
         if (this.isHost) {
             this.orbitControls.addEventListener('change', () => {
                 const cameraState = {
@@ -77,7 +89,7 @@ class App {
             });
         }
 
-        // Viewers receive updates
+        // Viewers receive updates.
         this.socket.on('camera-update', (cameraState) => {
             if (!this.isHost) {
                 this.camera.position.fromArray(cameraState.position);
@@ -100,7 +112,7 @@ class App {
             }
         });
 
-        // AR mode synchronization
+        // AR mode synchronization.
         this.socket.on('ar-session-start', () => {
             if (!this.isHost) {
                 this.scene.background = null;
@@ -113,7 +125,7 @@ class App {
             }
         });
 
-        // Model loading synchronization
+        // Model loading synchronization.
         this.socket.on('model-loaded', (modelData) => {
             if (!this.isHost) {
                 this.loadModel(modelData.url, modelData.name);
@@ -126,7 +138,7 @@ class App {
             }
         });
 
-        // State synchronization for new viewers
+        // State synchronization for new viewers.
         if (this.isHost) {
             this.socket.on('request-current-state', () => {
                 const state = {
@@ -150,7 +162,6 @@ class App {
 
         this.socket.on('current-state', (state) => {
             if (!this.isHost) {
-                // Update camera
                 this.camera.position.fromArray(state.camera.position);
                 this.camera.rotation.fromArray(state.camera.rotation);
                 if (this.orbitControls) {
@@ -158,7 +169,6 @@ class App {
                     this.orbitControls.update();
                 }
 
-                // Update models
                 state.models.forEach(modelState => {
                     const model = this.loadedModels.get(modelState.name);
                     if (model) {
@@ -170,14 +180,14 @@ class App {
             }
         });
         
-        // Handle viewer uploads
+        // Handle viewer uploads.
         this.socket.on('viewer-upload', (modelData) => {
-            // Convert base64 to blob
-            const base64Response = fetch(modelData.data);
-            base64Response.then(res => res.blob()).then(blob => {
-                const url = URL.createObjectURL(blob);
-                this.loadModel(url, modelData.name);
-            });
+            fetch(modelData.data)
+                .then(res => res.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    this.loadModel(url, modelData.name);
+                });
         });
     }
 
@@ -189,11 +199,13 @@ class App {
         }
     }
 
-    
-
     init() {
         this.container = document.getElementById('scene-container');
         this.scene = new THREE.Scene();
+        // Create a dedicated group for product parts.
+        this.productGroup = new THREE.Group();
+        this.scene.add(this.productGroup);
+
         this.camera = new THREE.PerspectiveCamera(
             75,
             window.innerWidth / window.innerHeight,
@@ -220,106 +232,12 @@ class App {
         this.rgbeLoader.load('https://raw.githubusercontent.com/kool-ltd/product-viewer/main/assets/brown_photostudio_02_4k.hdr', (texture) => {
             texture.mapping = THREE.EquirectangularReflectionMapping;
             this.scene.environment = texture;
-
+            
             this.renderer.physicallyCorrectLights = true;
             this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
             this.renderer.toneMappingExposure = 0.7;
             this.renderer.outputEncoding = THREE.sRGBEncoding;
         });
-    }
-
-    setupARButton() {
-        if ('xr' in navigator) {
-            const arButton = ARButton.createButton(this.renderer, {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            document.body.appendChild(arButton);
-    
-            // Create controller rays and models before session starts
-            this.setupXRControllers();
-    
-            // Enhanced AR session handling
-            this.renderer.xr.addEventListener('sessionstart', () => {
-                console.log("AR session started");
-                this.isARMode = true;
-                this.scene.background = null;
-                
-                // Critical for AR transparency
-                this.renderer.setClearColor(0x000000, 0);
-                
-                // Make controllers visible in AR
-                if (this.controller1) this.controller1.visible = true;
-                if (this.controller2) this.controller2.visible = true;
-                if (this.controllerGrip1) this.controllerGrip1.visible = true;
-                if (this.controllerGrip2) this.controllerGrip2.visible = true;
-                
-                if (this.isHost) {
-                    this.socket.emit('ar-session-start');
-                }
-            });
-    
-            this.renderer.xr.addEventListener('sessionend', () => {
-                console.log("AR session ended");
-                this.isARMode = false;
-                this.scene.background = new THREE.Color(0xcccccc);
-                this.renderer.setClearColor(0xcccccc, 1);
-                
-                if (this.isHost) {
-                    this.socket.emit('ar-session-end');
-                }
-            });
-        }
-    }
-
-    // Add these controller event handlers
-    onControllerSelectStart(event) {
-        if (!this.isARMode) return;
-        
-        const controller = event.target;
-        
-        // Position the interaction plane in front of the controller
-        const controllerWorldPos = new THREE.Vector3();
-        controller.getWorldPosition(controllerWorldPos);
-        
-        const controllerDirection = new THREE.Vector3(0, 0, -1);
-        controllerDirection.applyQuaternion(controller.quaternion);
-        controllerDirection.normalize();
-        
-        this.interactionPlane.position.copy(controllerWorldPos).add(
-            controllerDirection.multiplyScalar(0.5)
-        );
-        this.interactionPlane.quaternion.copy(controller.quaternion);
-        
-        // Create raycaster
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.identity().extractRotation(controller.matrixWorld);
-        
-        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-        
-        // Find objects to interact with
-        const draggableObjects = Array.from(this.loadedModels.values());
-        const intersects = this.raycaster.intersectObjects(draggableObjects, true);
-        
-        if (intersects.length > 0) {
-            this.selectedObject = intersects[0].object;
-            this.activeController = controller;
-            this.initialObjectPosition = this.selectedObject.position.clone();
-            
-            // Find intersection with the plane
-            const planeIntersects = this.raycaster.intersectObject(this.interactionPlane);
-            if (planeIntersects.length > 0) {
-                this.lastIntersectionPoint = planeIntersects[0].point.clone();
-            }
-        }
-    }
-
-    onControllerSelectEnd() {
-        this.selectedObject = null;
-        this.activeController = null;
-        this.lastIntersectionPoint = null;
     }
 
     setupLights() {
@@ -331,89 +249,50 @@ class App {
         this.scene.add(directionalLight);
     }
 
+    setupARButton() {
+        if ('xr' in navigator) {
+            const arButton = ARButton.createButton(this.renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            document.body.appendChild(arButton);
+    
+            this.setupXRControllers();
+    
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                console.log("AR session started");
+                this.isARMode = true;
+                this.scene.background = null;
+                this.renderer.setClearColor(0x000000, 0);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-start');
+                }
+            });
+    
+            this.renderer.xr.addEventListener('sessionend', () => {
+                console.log("AR session ended");
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);
+                this.renderer.setClearColor(0xcccccc, 1);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-end');
+                }
+            });
+        }
+    }
+
     setupInitialControls() {
         this.orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
         this.orbitControls.enableDamping = true;
         this.orbitControls.dampingFactor = 0.05;
-
-        // Allow viewers to orbit/zoom but not manipulate objects
-        if (!this.isHost) {
-            this.orbitControls.enablePan = false;
-        }
-
         this.dragControls = new DragControls(this.draggableObjects, this.camera, this.renderer.domElement);
-
-        // Only allow host to drag objects
-        if (!this.isHost) {
-            this.dragControls.enabled = false;
-        }
-
+        this.dragControls.enabled = true;
         this.setupControlsEventListeners();
 
-        // Add touch interaction for AR mode
+        // Touch event listeners (if desired) can be added here—but let DragControls handle them.
         this.renderer.domElement.addEventListener('touchstart', (event) => {
-            if (!this.isARMode) return;
-
-            event.preventDefault();
-
-            const touch = event.touches[0];
-            const mouse = new THREE.Vector2();
-
-            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(mouse, this.camera);
-
-            const intersects = raycaster.intersectObjects(this.draggableObjects, true);
-
-            if (intersects.length > 0) {
-                const selectedObject = intersects[0].object;
-                let targetObject = selectedObject;
-
-                while (targetObject.parent && targetObject.parent !== this.scene) {
-                    targetObject = targetObject.parent;
-                }
-
-                this.selectedObject = targetObject;
-                this.initialTouchX = touch.clientX;
-                this.initialTouchY = touch.clientY;
-                this.initialObjectPosition = targetObject.position.clone();
-            }
-        });
-
-        this.renderer.domElement.addEventListener('touchmove', (event) => {
-            if (!this.isARMode || !this.selectedObject || !this.isHost) return;
-
-            event.preventDefault();
-
-            const touch = event.touches[0];
-            const deltaX = (touch.clientX - this.initialTouchX) * 0.01;
-            const deltaY = (touch.clientY - this.initialTouchY) * 0.01;
-
-            const cameraRight = new THREE.Vector3();
-            const cameraUp = new THREE.Vector3();
-            this.camera.getWorldDirection(cameraRight);
-            cameraRight.cross(this.camera.up).normalize();
-            cameraUp.copy(this.camera.up);
-
-            this.selectedObject.position.copy(this.initialObjectPosition);
-            this.selectedObject.position.add(cameraRight.multiplyScalar(-deltaX));
-            this.selectedObject.position.add(cameraUp.multiplyScalar(-deltaY));
-
-            if (this.isHost) {
-                this.socket.emit('model-transform', {
-                    id: this.selectedObject.uuid,
-                    position: this.selectedObject.position.toArray(),
-                    rotation: this.selectedObject.rotation.toArray(),
-                    scale: this.selectedObject.scale.toArray()
-                });
-            }
-        });
-
-        this.renderer.domElement.addEventListener('touchend', () => {
-            if (!this.isARMode) return;
-            this.selectedObject = null;
+            // No extra action needed; DragControls will take care of touch events.
         });
     }
 
@@ -427,13 +306,26 @@ class App {
         });
     }
 
-    setupFileUpload() {
-        const uploadContainer = document.createElement('div');
-        uploadContainer.style.position = 'fixed';
-        uploadContainer.style.top = '10px';
-        uploadContainer.style.left = '10px';
-        uploadContainer.style.zIndex = '1000';
+    setupInterface() {
+        const controlsContainer = document.createElement('div');
+        controlsContainer.style.position = 'fixed';
+        controlsContainer.style.top = '10px';
+        controlsContainer.style.left = '10px';
+        controlsContainer.style.zIndex = '1000';
+        controlsContainer.style.display = 'flex';
+        controlsContainer.style.gap = '10px';
+        controlsContainer.style.alignItems = 'center';
 
+        const roleIndicator = document.createElement('div');
+        roleIndicator.style.padding = '5px 10px';
+        roleIndicator.style.borderRadius = '4px';
+        roleIndicator.style.backgroundColor = this.isHost ? '#4CAF50' : '#2196F3';
+        roleIndicator.style.color = 'white';
+        roleIndicator.style.fontSize = '14px';
+        roleIndicator.textContent = this.isHost ? 'Host' : 'Viewer';
+        controlsContainer.appendChild(roleIndicator);
+
+        const uploadContainer = document.createElement('div');
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
         fileInput.accept = '.glb,.gltf';
@@ -448,31 +340,60 @@ class App {
 
         fileInput.onchange = (event) => {
             this.clearExistingModels();
-
             const files = event.target.files;
             for (let file of files) {
                 const url = URL.createObjectURL(file);
                 const name = file.name.replace('.glb', '').replace('.gltf', '');
                 this.loadModel(url, name);
+                if (this.isHost) {
+                    this.socket.emit('model-loaded', { url, name });
+                }
             }
         };
 
         uploadContainer.appendChild(uploadButton);
         uploadContainer.appendChild(fileInput);
-        document.body.appendChild(uploadContainer);
-    }
+        controlsContainer.appendChild(uploadContainer);
 
+        if ('xr' in navigator) {
+            const arButton = ARButton.createButton(this.renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            arButton.style.position = 'fixed';
+            controlsContainer.appendChild(arButton);
+            
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                this.isARMode = true;
+                this.scene.background = null;
+                this.renderer.setClearColor(0x000000, 0);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-start');
+                }
+            });
+    
+            this.renderer.xr.addEventListener('sessionend', () => {
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);
+                this.renderer.setClearColor(0xcccccc, 1);
+                if (this.isHost) {
+                    this.socket.emit('ar-session-end');
+                }
+            });
+        }
+
+        document.body.appendChild(controlsContainer);
+    }
+    
     clearExistingModels() {
         this.loadedModels.forEach(model => {
-            this.scene.remove(model);
+            // Remove from product group instead of the entire scene.
+            this.productGroup.remove(model);
         });
-
         this.loadedModels.clear();
         this.draggableObjects.length = 0;
-
         this.updateDragControls();
-
-        // Only emit models-cleared if host
         if (this.isHost) {
             this.socket.emit('models-cleared');
         }
@@ -483,25 +404,19 @@ class App {
             url, 
             (gltf) => {
                 const model = gltf.scene;
-                // Mark the container as draggable
                 model.userData.isDraggable = true;
-
-                // Disable raycasting for all children (so they won't be picked)
                 model.traverse((child) => {
                     if (child !== model && child.isMesh) {
                         child.raycast = () => [];
                     }
                 });
 
-                // Add a custom raycast method on the container (model).
+                // Add a custom raycast so the product container can be selected.
                 model.raycast = function(raycaster, intersects) {
-                    // Compute the bounding box of the model.
                     const box = new THREE.Box3().setFromObject(model);
                     if (!box.isEmpty()) {
-                        // Check if the ray intersects with the bounding box.
                         const intersectionPoint = new THREE.Vector3();
                         if (raycaster.ray.intersectBox(box, intersectionPoint)) {
-                            // Calculate the distance from the ray's origin to interference point.
                             const distance = raycaster.ray.origin.distanceTo(intersectionPoint);
                             intersects.push({
                                 distance: distance,
@@ -512,14 +427,14 @@ class App {
                     }
                 };
 
-                // Add the container as a draggable object.
                 this.draggableObjects.push(model);
-                this.scene.add(model);
+                // Instead of adding the model directly to the scene,
+                // add it to the dedicated productGroup.
+                this.productGroup.add(model);
                 this.loadedModels.set(name, model);
                 this.updateDragControls();
                 this.fitCameraToScene();
 
-                // For host mode, emit the model-loaded event.
                 if (this.isHost) {
                     this.socket.emit('model-loaded', { url, name });
                 }
@@ -537,38 +452,30 @@ class App {
 
     updateDragControls() {
         const draggableObjects = Array.from(this.loadedModels.values());
-
         if (this.dragControls) {
             this.dragControls.dispose();
         }
-
         this.dragControls = new DragControls(draggableObjects, this.camera, this.renderer.domElement);
         this.setupControlsEventListeners();
     }
 
     fitCameraToScene() {
-        const box = new THREE.Box3().setFromObject(this.scene);
+        // Compute the bounding box of the productGroup only.
+        const box = new THREE.Box3().setFromObject(this.productGroup);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
-
+        
+        // Adjust the camera distance [smaller multiplier zooms in].
         const maxDim = Math.max(size.x, size.y, size.z);
         const fov = this.camera.fov * (Math.PI / 180);
         let cameraZ = Math.abs(maxDim / Math.tan(fov / 2));
-
-        cameraZ *= 1.5;
-
-        this.camera.position.set(0, 0, cameraZ);
+        cameraZ *= 1.2; // Reduced multiplier for a closer view
+        
+        // Reposition the camera so that it looks at the center of the product group.
+        this.camera.position.set(center.x, center.y, center.z + cameraZ);
         this.orbitControls.target.copy(center);
         this.camera.updateProjectionMatrix();
         this.orbitControls.update();
-
-        if (this.isHost) {
-            this.socket.emit('camera-update', {
-                position: this.camera.position.toArray(),
-                rotation: this.camera.rotation.toArray(),
-                target: this.orbitControls.target.toArray()
-            });
-        }
     }
 
     loadDefaultModels() {
@@ -578,57 +485,24 @@ class App {
             { url: './assets/kool-mandoline-handguard.glb', name: 'handguard' },
             { url: './assets/kool-mandoline-handletpe.glb', name: 'handle' }
         ];
-
-        // Clear existing models before loading defaults
+    
+        // Clear existing models before loading defaults.
         this.clearExistingModels();
-
+    
         models.forEach(model => {
             this.loadModel(model.url, model.name);
         });
+    
+        // After models load, update draggable objects in the interaction manager.
+        setTimeout(() => {
+            this.interactionManager.setDraggableObjects(Array.from(this.loadedModels.values()));
+        }, 1000);
     }
 
     animate() {
         this.renderer.setAnimationLoop(() => {
-            // Handle controller-based dragging
-            if (this.selectedObject && this.activeController) {
-                // Get current controller position
-                const currentPosition = new THREE.Vector3();
-                currentPosition.setFromMatrixPosition(this.activeController.matrixWorld);
-                
-                // Calculate movement delta
-                const delta = new THREE.Vector3().subVectors(
-                    currentPosition, 
-                    this.lastControllerPosition
-                );
-                
-                // Apply movement to the selected object
-                this.selectedObject.position.add(delta);
-                
-                // Update last position
-                this.lastControllerPosition.copy(currentPosition);
-                
-                // Broadcast position changes if host
-                if (this.isHost) {
-                    this.socket.emit('model-transform', {
-                        id: this.selectedObject.uuid,
-                        position: this.selectedObject.position.toArray(),
-                        rotation: this.selectedObject.rotation.toArray(),
-                        scale: this.selectedObject.scale.toArray()
-                    });
-                }
-            }
-            
-            // Original AR camera update code
-            if (this.isHost && this.isARMode) {
-                const arCameraState = {
-                    position: this.camera.position.toArray(),
-                    rotation: this.camera.rotation.toArray()
-                };
-                this.socket.emit('ar-camera-update', arCameraState);
-            }
-    
-            // Update controls and render
             this.orbitControls.update();
+            this.interactionManager.update();
             this.renderer.render(this.scene, this.camera);
         });
     }
@@ -662,7 +536,6 @@ class App {
             </div>
         `;
 
-        // Add the spinner animation
         const style = document.createElement('style');
         style.textContent = `
             @keyframes spin {
@@ -672,232 +545,6 @@ class App {
         `;
         document.head.appendChild(style);
         document.body.appendChild(overlay);
-    }
-
-    setupInterface() {
-        // Create container for controls
-        const controlsContainer = document.createElement('div');
-        controlsContainer.style.position = 'fixed';
-        controlsContainer.style.top = '10px';
-        controlsContainer.style.left = '10px';
-        controlsContainer.style.zIndex = '1000';
-        controlsContainer.style.display = 'flex';
-        controlsContainer.style.gap = '10px';
-        controlsContainer.style.alignItems = 'center';
-
-        // Role indicator
-        const roleIndicator = document.createElement('div');
-        roleIndicator.style.padding = '5px 10px';
-        roleIndicator.style.borderRadius = '4px';
-        roleIndicator.style.backgroundColor = this.isHost ? '#4CAF50' : '#2196F3';
-        roleIndicator.style.color = 'white';
-        roleIndicator.style.fontSize = '14px';
-        roleIndicator.textContent = this.isHost ? 'Host' : 'Viewer';
-        controlsContainer.appendChild(roleIndicator);
-
-        // Upload button and file input
-        const uploadContainer = document.createElement('div');
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = '.glb,.gltf';
-        fileInput.style.display = 'none';
-        fileInput.multiple = true;
-
-        const uploadButton = document.createElement('button');
-        uploadButton.textContent = 'Upload Model';
-        uploadButton.style.padding = '10px';
-        uploadButton.style.cursor = 'pointer';
-        uploadButton.onclick = () => fileInput.click();
-
-        fileInput.onchange = (event) => {
-            this.clearExistingModels();
-            const files = event.target.files;
-            for (let file of files) {
-                const url = URL.createObjectURL(file);
-                const name = file.name.replace('.glb', '').replace('.gltf', '');
-                this.loadModel(url, name);
-
-                // If host, broadcast to viewers
-                if (this.isHost) {
-                    this.socket.emit('model-loaded', { url, name });
-                }
-            }
-        };
-
-        uploadContainer.appendChild(uploadButton);
-        uploadContainer.appendChild(fileInput);
-        controlsContainer.appendChild(uploadContainer);
-
-        // AR Button
-        if ('xr' in navigator) {
-            const arButton = ARButton.createButton(this.renderer, {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            arButton.style.position = 'relative';
-            arButton.style.left = 'auto';
-            arButton.style.bottom = 'auto';
-            controlsContainer.appendChild(arButton);
-            
-            // Add these event listeners to properly handle AR mode
-            this.renderer.xr.addEventListener('sessionstart', () => {
-                this.isARMode = true;
-                this.scene.background = null;
-                // Make sure we set the renderer's clear color to be fully transparent
-                this.renderer.setClearColor(0x000000, 0);
-                if (this.isHost) {
-                    this.socket.emit('ar-session-start');
-                }
-            });
-
-            this.renderer.xr.addEventListener('sessionend', () => {
-                this.isARMode = false;
-                this.scene.background = new THREE.Color(0xcccccc);
-                this.renderer.setClearColor(0xcccccc, 1);
-                if (this.isHost) {
-                    this.socket.emit('ar-session-end');
-                }
-            });
-        }
-
-        document.body.appendChild(controlsContainer);
-    }
-
-    setupXRControllers() {
-        console.log("Setting up XR controllers");
-        
-        // Create controller rays (visible pointers)
-        const rayGeometry = new THREE.BufferGeometry();
-        rayGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, -10], 3));
-        
-        const rayMaterial = new THREE.LineBasicMaterial({
-            color: 0xFF0000,  // Bright red for visibility in AR
-            linewidth: 5      // Thicker line for better visibility
-        });
-        
-        // Create grip/controller model factory
-        const controllerModelFactory = new XRControllerModelFactory();
-        
-        // Controller 1
-        this.controller1 = this.renderer.xr.getController(0);
-        this.controller1.name = "controller-right";
-        this.scene.add(this.controller1);
-        
-        // Add visible ray to controller
-        const controllerRay1 = new THREE.Line(rayGeometry, rayMaterial);
-        controllerRay1.name = "controller-ray";
-        this.controller1.add(controllerRay1);
-        
-        // Add grip model
-        this.controllerGrip1 = this.renderer.xr.getControllerGrip(0);
-        this.controllerGrip1.add(controllerModelFactory.createControllerModel(this.controllerGrip1));
-        this.scene.add(this.controllerGrip1);
-        
-        // Controller 2
-        this.controller2 = this.renderer.xr.getController(1);
-        this.controller2.name = "controller-left";
-        this.scene.add(this.controller2);
-        
-        // Add visible ray to controller
-        const controllerRay2 = new THREE.Line(rayGeometry, rayMaterial);
-        controllerRay2.name = "controller-ray";
-        this.controller2.add(controllerRay2);
-        
-        // Add grip model
-        this.controllerGrip2 = this.renderer.xr.getControllerGrip(1);
-        this.controllerGrip2.add(controllerModelFactory.createControllerModel(this.controllerGrip2));
-        this.scene.add(this.controllerGrip2);
-        
-        // Add controller event listeners
-        this.controller1.addEventListener('selectstart', this.onControllerSelectStart.bind(this));
-        this.controller1.addEventListener('selectend', this.onControllerSelectEnd.bind(this));
-        this.controller2.addEventListener('selectstart', this.onControllerSelectStart.bind(this));
-        this.controller2.addEventListener('selectend', this.onControllerSelectEnd.bind(this));
-        
-        // Create raycaster and helper objects for controller interaction
-        this.raycaster = new THREE.Raycaster();
-        this.selectedObject = null;
-        this.activeController = null;
-        this.lastControllerPosition = new THREE.Vector3();
-        
-        console.log("XR controllers set up");
-    }
-    
-    // Add controller event handlers
-    onControllerSelectStart(event) {
-        console.log("Controller select start");
-        const controller = event.target;
-        
-        // Setup raycaster from controller
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.identity().extractRotation(controller.matrixWorld);
-        
-        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-        
-        // Get all models as draggable objects
-        const draggableObjects = Array.from(this.loadedModels.values());
-        
-        // Find intersected objects
-        const intersects = this.raycaster.intersectObjects(draggableObjects, true);
-        console.log("Intersected objects:", intersects.length);
-        
-        if (intersects.length > 0) {
-            let targetObject = intersects[0].object;
-            
-            // Find the top-level model parent
-            while (targetObject.parent && !this.loadedModels.has(targetObject.name)) {
-                targetObject = targetObject.parent;
-                if (targetObject === this.scene) break;
-            }
-            
-            // Check if we found a valid model from our loadedModels
-            let isValidModel = false;
-            this.loadedModels.forEach((model) => {
-                if (model === targetObject) isValidModel = true;
-            });
-            
-            if (isValidModel) {
-                console.log("Selected model:", targetObject.name);
-                this.selectedObject = targetObject;
-                this.activeController = controller;
-                this.lastControllerPosition = new THREE.Vector3();
-                this.lastControllerPosition.setFromMatrixPosition(controller.matrixWorld);
-                
-                // Store initial positions
-                this.initialObjectPosition = targetObject.position.clone();
-                this.initialControllerPosition = this.lastControllerPosition.clone();
-                
-                // Visual feedback that object is selected
-                targetObject.userData.originalMaterials = [];
-                targetObject.traverse((child) => {
-                    if (child.isMesh && child.material) {
-                        child.userData.originalMaterial = child.material;
-                        // Create highlighted material
-                        child.material = child.material.clone();
-                        child.material.emissive = new THREE.Color(0x333333);
-                    }
-                });
-            }
-        }
-    }
-    
-    onControllerSelectEnd() {
-        console.log("Controller select end");
-        
-        if (this.selectedObject) {
-            // Restore original materials
-            this.selectedObject.traverse((child) => {
-                if (child.isMesh && child.userData.originalMaterial) {
-                    child.material = child.userData.originalMaterial;
-                    delete child.userData.originalMaterial;
-                }
-            });
-        }
-        
-        this.selectedObject = null;
-        this.activeController = null;
     }
 }
 
