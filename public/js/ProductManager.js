@@ -7,7 +7,7 @@ export class ProductManager {
         this.parts = new Map();
     }
 
-    async loadPart(url) {
+    async loadPart(url, customId = null) {
         try {
             const gltf = await this.loader.loadAsync(url);
             const model = gltf.scene;
@@ -16,8 +16,9 @@ export class ProductManager {
             const originalScale = model.scale.clone();
             model.userData.originalScale = originalScale;
 
-            // Add to parts collection
-            const partId = `part_${this.parts.size}`;
+            // Use customId if provided; otherwise generate one.
+            const partId = customId || `part_${this.parts.size}`;
+            model.name = partId;  // Set object's name for consistent identification.
             this.parts.set(partId, model);
 
             return model;
