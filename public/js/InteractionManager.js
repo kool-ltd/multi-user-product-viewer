@@ -26,7 +26,6 @@ export class InteractionManager {
 
         this.setupOrbitControls();
         this.setupDragControls();
-        // Remove AR-specific touch event listeners that would block dragging on mobile.
         this.setupXRControllers();
         
         if (this.renderer) {
@@ -34,7 +33,6 @@ export class InteractionManager {
             this.renderer.xr.addEventListener('sessionstart', () => {
                 console.log("XR session started");
                 this.isXRSessionActive = true;
-
                 // Ensure controllers are visible when XR is active.
                 if (this.controller1) this.controller1.visible = true;
                 if (this.controller2) this.controller2.visible = true;
@@ -45,7 +43,7 @@ export class InteractionManager {
             this.renderer.xr.addEventListener('sessionend', () => {
                 console.log("XR session ended");
                 this.isXRSessionActive = false;
-                this.rotationMode = false; // Also end any rotation mode.
+                this.rotationMode = false; // End any rotation mode.
             });
         }
     }
@@ -63,15 +61,17 @@ export class InteractionManager {
 
     setupDragControlsEvents() {
         this.dragControls.addEventListener('dragstart', () => {
+            // Disable orbit controls so that the viewport remains fixed during drag.
             this.orbitControls.enabled = false;
         });
 
         this.dragControls.addEventListener('dragend', () => {
+            // Re-enable orbit controls once dragging ends.
             this.orbitControls.enabled = true;
         });
 
         this.dragControls.addEventListener('drag', (event) => {
-            // Prevent accidental scaling during drag
+            // Ensure the object's scale remains its original scale during dragging.
             const object = event.object;
             if (object.userData.originalScale) {
                 object.scale.copy(object.userData.originalScale);
@@ -84,7 +84,7 @@ export class InteractionManager {
         
         console.log("Setting up XR controllers");
         
-        // Create visible controller rays
+        // Create visible controller rays.
         const rayGeometry = new THREE.BufferGeometry();
         rayGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, -10], 3));
         
@@ -123,7 +123,7 @@ export class InteractionManager {
         this.controller2.addEventListener('selectstart', this.onControllerSelectStart.bind(this));
         this.controller2.addEventListener('selectend', this.onControllerSelectEnd.bind(this));
         
-        // **New:** Set up squeeze event listeners for rotation.
+        // Set up squeeze event listeners for rotation.
         this.controller1.addEventListener('squeezestart', this.onControllerSqueezeStart.bind(this));
         this.controller1.addEventListener('squeezeend', this.onControllerSqueezeEnd.bind(this));
         this.controller2.addEventListener('squeezestart', this.onControllerSqueezeStart.bind(this));
@@ -136,7 +136,7 @@ export class InteractionManager {
         const controller = event.target;
         console.log("Controller select start");
         
-        // Set up the raycaster from the controller.
+        // Configure the raycaster based on the controller's current orientation.
         const tempMatrix = new THREE.Matrix4();
         tempMatrix.identity().extractRotation(controller.matrixWorld);
         
@@ -148,7 +148,7 @@ export class InteractionManager {
         
         if (intersects.length > 0) {
             let targetObject = intersects[0].object;
-            // Traverse upward to get a top-level product object.
+            // Traverse upward to find the parent product container.
             while (targetObject.parent && targetObject.parent !== this.scene) {
                 targetObject = targetObject.parent;
             }
@@ -164,17 +164,17 @@ export class InteractionManager {
         console.log("Controller select end");
         this.selectedObject = null;
         this.activeController = null;
-        this.rotationMode = false; // End rotation mode on deselection.
+        this.rotationMode = false; // End any active rotation.
     }
 
-    // --- New rotation event handlers ---
+    // Rotation event handlers.
     onControllerSqueezeStart(event) {
         const controller = event.target;
         console.log("Squeeze start");
-        // Only enter rotation mode if an object is selected.
+        // Only enable rotation mode if an object is already selected.
         if (this.selectedObject) {
             this.rotationMode = true;
-            // Store the initial orientations.
+            // Save the starting orientations.
             this.startControllerQuaternion.copy(controller.quaternion);
             this.startObjectQuaternion.copy(this.selectedObject.quaternion);
         }
@@ -194,25 +194,22 @@ export class InteractionManager {
 
     update() {
         if (this.selectedObject && this.activeController && this.isXRSessionActive) {
-            // If rotation mode is active, update the object's rotation based on the controller's rotation change.
             if (this.rotationMode) {
-                // Compute the difference between the current and starting controller quaternions.
+                // Update object's rotation based on the change in controller's orientation.
                 const currentControllerQuaternion = this.activeController.quaternion;
                 const deltaQuaternion = currentControllerQuaternion.clone();
                 deltaQuaternion.multiply(this.startControllerQuaternion.clone().invert());
-                // Apply the delta to the object's initial quaternion.
                 const newObjectQuaternion = deltaQuaternion.multiply(this.startObjectQuaternion);
                 this.selectedObject.quaternion.copy(newObjectQuaternion);
             } else {
-                // Otherwise, perform translation (movement).
+                // Update position by computing difference between current and last controller positions.
                 const currentPosition = new THREE.Vector3();
                 currentPosition.setFromMatrixPosition(this.activeController.matrixWorld);
                 let delta = new THREE.Vector3().subVectors(currentPosition, this.lastControllerPosition);
                 
-                // Optional: Increase movement sensitivity in AR mode (mobile)
-                // Here we use a simple check for mobile devices.
+                // Optionally increase sensitivity on mobile devices.
                 if (navigator.userAgent.match(/Mobi/)) {
-                    delta.multiplyScalar(2.0); // Adjust multiplier as needed.
+                    delta.multiplyScalar(2.0);
                 }
                 
                 this.selectedObject.position.add(delta);
@@ -220,7 +217,7 @@ export class InteractionManager {
             }
         }
         
-        // When not in an XR session, update OrbitControls normally.
+        // Ensure orbit controls are updated when not in XR session.
         if (this.orbitControls && !this.isXRSessionActive) {
             this.orbitControls.update();
         }
