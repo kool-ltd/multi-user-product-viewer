@@ -47,7 +47,11 @@ class App {
         // Setup XR
         document.body.appendChild(VRButton.createButton(this.sceneManager.renderer));
         document.body.appendChild(ARButton.createButton(this.sceneManager.renderer, {
-            requiredFeatures: ['hit-test'],
+            requiredFeatures: ['hit-test', 'depth-sensing'],
+            depthSensing: {
+                usagePreference: ['cpu-optimized', 'gpu-optimized'],
+                dataFormatPreference: ['luminance-alpha', 'float32']
+            },
             optionalFeatures: ['dom-overlay'],
             domOverlay: { root: document.body }
         }));

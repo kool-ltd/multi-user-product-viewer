@@ -149,7 +149,7 @@ export function showConfirmationModal(message) {
     message: message,
     buttons: [
       {
-        text: 'OK',
+        text: 'Confirm',
         onClick: () => {
           hideModal();
         },
@@ -190,7 +190,7 @@ style.textContent = `
 .custom-modal-buttons button {
   padding: 8px 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: 9999px;
   background: #d00024;
   color: white;
   cursor: pointer;

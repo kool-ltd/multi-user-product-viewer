@@ -10,6 +10,8 @@ export function setupUIControls(app) {
   app.hostRequestPending = false;
   app.hostRequestTimer = null;
   app.currentHostId = null; // Set by the server when a host is active.
+  // New pointer state variable.
+  app.pointerActive = false;
 
   // Create a container for the controls.
   const controlsContainer = document.createElement('div');
@@ -57,7 +59,7 @@ export function setupUIControls(app) {
   // Define actions for the toggle buttons.
   // ------------------------------
 
-  // Viewer button: relinquish host role.
+  // Viewer button: if you're host click to give up host role.
   viewerButton.addEventListener('click', () => {
     if (app.isHost) {
       app.socket.emit('give-up-host');
@@ -76,7 +78,7 @@ export function setupUIControls(app) {
     }
   });
 
-  // Host button.
+  // Host button: toggle to become host.
   hostButton.addEventListener('click', () => {
     if (app.isHost) {
       app.socket.emit('give-up-host');
@@ -106,10 +108,10 @@ export function setupUIControls(app) {
   controlsContainer.appendChild(toggleContainer);
 
   // ------------------------------
-  // Example: Create an Upload button (optional).
+  // Create the Upload button.
   // ------------------------------
   const uploadButton = document.createElement('button');
-  uploadButton.textContent = 'Upload Model';
+  uploadButton.textContent = 'Upload';
   uploadButton.style.padding = '8px 24px';
   uploadButton.style.border = 'none';
   uploadButton.style.outline = 'none';
@@ -131,24 +133,181 @@ export function setupUIControls(app) {
   fileInput.accept = '.glb,.gltf';
   fileInput.style.display = 'none';
   fileInput.multiple = true;
-  fileInput.onchange = (event) => {
+  fileInput.onchange = async (event) => {
+    // Clear out any existing models.
     app.clearExistingModels();
     const files = event.target.files;
     for (let file of files) {
-      const url = URL.createObjectURL(file);
-      const name = file.name.replace('.glb', '').replace('.gltf', '');
-      app.loadModel(url, name);
-      if (app.isHost) {
-        app.socket.emit('model-loaded', { url, name });
+      const formData = new FormData();
+      formData.append('model', file);
+      try {
+        const response = await fetch('/upload', {
+          method: 'POST',
+          headers: {
+            'x-socket-id': app.socket.id,
+            'x-uploader-role': app.isHost ? 'host' : 'viewer'
+          },
+          body: formData
+        });
+        if (response.ok) {
+          const data = await response.json();
+          // For hosts, skip local load and wait for the aggregated broadcast.
+          if (!app.isHost) {
+            const name = data.name.replace('.glb', '').replace('.gltf', '');
+            app.loadModel(data.url, name);
+          }
+        } else {
+          console.error("Upload failed:", response.statusText);
+        }
+      } catch (error) {
+        console.error("File upload error:", error);
       }
+    }
+    if (app.isHost) {
+      if (app._productUploadCompleteTimeout) {
+        clearTimeout(app._productUploadCompleteTimeout);
+      }
+      app._productUploadCompleteTimeout = setTimeout(() => {
+        app.socket.emit('product-upload-complete');
+        app._productUploadCompleteTimeout = null;
+      }, 500);
     }
   };
   
   uploadButton.onclick = () => fileInput.click();
   
   controlsContainer.appendChild(uploadButton);
+  
+  // ------------------------------
+  // Create a Reset button.
+  // ------------------------------
+  const resetButton = document.createElement('button');
+  resetButton.textContent = 'Reset';
+  resetButton.style.padding = '8px 24px';
+  resetButton.style.border = 'none';
+  resetButton.style.outline = 'none';
+  resetButton.style.borderRadius = '9999px';
+  resetButton.style.backgroundColor = '#d00024';
+  resetButton.style.color = 'white';
+  resetButton.style.cursor = 'pointer';
+  resetButton.style.transition = 'background-color 0.3s ease, color 0.3s ease';
+  
+  resetButton.addEventListener('mouseover', () => {
+    resetButton.style.backgroundColor = '#b0001d';
+  });
+  resetButton.addEventListener('mouseout', () => {
+    resetButton.style.backgroundColor = '#d00024';
+  });
+  
+  resetButton.onclick = () => {
+    // Reset the transformation (position, rotation, and scale) of all parts.
+    if (app.productGroup) {
+      app.productGroup.children.forEach((child) => {
+        child.position.set(0, 0, 0);
+        child.rotation.set(0, 0, 0);
+        // Reset to the stored original scale or default to (1, 1, 1)
+        if (child.children.length > 0 && child.children[0].userData.originalScale) {
+          child.scale.copy(child.children[0].userData.originalScale);
+        } else {
+          child.scale.set(1, 1, 1);
+        }
+      });
+    }
+    // Reset the camera/viewport to its initial state.
+    if (typeof app.fitCameraToScene === 'function') {
+      app.fitCameraToScene();
+    }
+    // If host, broadcast the reset event to all viewers.
+    if (app.isHost) {
+      app.socket.emit('reset-all');
+    }
+  };
+  
+  controlsContainer.appendChild(resetButton);
   controlsContainer.appendChild(fileInput);
   
+  // ------------------------------
+  // Create an extra pointer toggle button.
+  // ------------------------------
+  // This button allows the host to toggle a pointer that broadcasts where they are pointing.
+  // It is always added but only visible when app.isHost is true.
+  const pointerToggleButton = document.createElement('button');
+  pointerToggleButton.textContent = 'Pointer';
+  pointerToggleButton.style.padding = '8px 24px';
+  pointerToggleButton.style.border = 'none';
+  pointerToggleButton.style.outline = 'none';
+  pointerToggleButton.style.borderRadius = '9999px';
+  pointerToggleButton.style.backgroundColor = '#d00024';
+  pointerToggleButton.style.color = 'white';
+  pointerToggleButton.style.cursor = 'pointer';
+  pointerToggleButton.style.transition = 'background-color 0.3s ease, color 0.3s ease';
+  // Set initial display based on host state.
+  pointerToggleButton.style.display = app.isHost ? 'inline-block' : 'none';
+
+  pointerToggleButton.addEventListener('click', () => {
+    // Toggle the pointer state.
+    app.pointerActive = !app.pointerActive;
+    
+    if (app.pointerActive) {
+      // Change button style for active pointer.
+      pointerToggleButton.style.backgroundColor = '#ffffff';
+      pointerToggleButton.style.color = '#d00024';
+      
+      // Create host pointer if it doesn't exist.
+      if (!app.hostPointer) {
+        const pointerRadius = 0.005;
+        const redMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(pointerRadius, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0xff0000 })
+        );
+        const outlineMesh = redMesh.clone();
+        outlineMesh.material = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          side: THREE.BackSide
+        });
+        outlineMesh.scale.multiplyScalar(1.5);
+        const pointerGroup = new THREE.Group();
+        pointerGroup.add(outlineMesh);
+        pointerGroup.add(redMesh);
+        app.hostPointer = pointerGroup;
+        app.scene.add(app.hostPointer);
+      }
+      
+      // Disable movement of parts: Save current draggable objects and clear them.
+      if (app.interactionManager &&
+          typeof app.interactionManager.getDraggableObjects === 'function' &&
+          typeof app.interactionManager.setDraggableObjects === 'function') {
+            app._savedDraggableObjects = app.interactionManager.getDraggableObjects();
+            app.interactionManager.setDraggableObjects([]); // Disable dragging.
+            console.log("disable dragging");
+          }
+    } else {
+      // Revert button style when pointer is off.
+      pointerToggleButton.style.backgroundColor = '#d00024';
+      pointerToggleButton.style.color = '#ffffff';
+      
+      // Remove the host pointer if it exists.
+      if (app.hostPointer) {
+        app.scene.remove(app.hostPointer);
+        app.hostPointer = null;
+      }
+      
+      // Re-enable movement of parts by restoring previously saved draggable objects.
+      if (app.interactionManager &&
+          typeof app.interactionManager.setDraggableObjects === 'function' &&
+          app._savedDraggableObjects) {
+            console.log("enable dragging");
+            app.interactionManager.setDraggableObjects(app._savedDraggableObjects);
+            app._savedDraggableObjects = [];
+      }
+    }
+    
+    // Broadcast the new pointer state.
+    app.socket.emit('host-pointer-toggle', { active: app.pointerActive });
+  });
+  
+  controlsContainer.appendChild(pointerToggleButton);
+
   // ------------------------------
   // Optional: AR Button (if supported).
   // ------------------------------
@@ -184,7 +343,7 @@ export function setupUIControls(app) {
   document.body.appendChild(controlsContainer);
   
   // Save references to the buttons.
-  app.toggleUI = { viewerButton, hostButton };
+  app.toggleUI = { viewerButton, hostButton, pointerToggleButton };
 }
 
 export function updateToggleUI(app, viewerButton, hostButton, isHost) {
@@ -193,10 +352,16 @@ export function updateToggleUI(app, viewerButton, hostButton, isHost) {
     hostButton.style.color = '#d00024';
     viewerButton.style.backgroundColor = 'transparent';
     viewerButton.style.color = 'white';
+    if (app.toggleUI && app.toggleUI.pointerToggleButton) {
+      app.toggleUI.pointerToggleButton.style.display = 'inline-block';
+    }
   } else {
     viewerButton.style.backgroundColor = 'white';
     viewerButton.style.color = '#d00024';
     hostButton.style.backgroundColor = 'transparent';
     hostButton.style.color = 'white';
+    if (app.toggleUI && app.toggleUI.pointerToggleButton) {
+      app.toggleUI.pointerToggleButton.style.display = 'none';
+    }
   }
 }
