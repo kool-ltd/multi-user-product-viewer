@@ -177,6 +177,38 @@ export function setupUIControls(app) {
   uploadButton.onclick = () => fileInput.click();
   
   controlsContainer.appendChild(uploadButton);
+
+  // ------------------------------
+  // Create the Browse button.
+  // ------------------------------
+  const browseButton = document.createElement('button');
+  browseButton.textContent = 'Browse';
+  browseButton.style.padding = '8px 24px';
+  browseButton.style.border = 'none';
+  browseButton.style.outline = 'none';
+  browseButton.style.borderRadius = '9999px';
+  browseButton.style.backgroundColor = '#d00024';
+  browseButton.style.color = 'white';
+  browseButton.style.cursor = 'pointer';
+  browseButton.style.transition = 'background-color 0.3s ease, color 0.3s ease';
+
+  browseButton.addEventListener('mouseover', () => {
+    browseButton.style.backgroundColor = '#b0001d';
+  });
+  browseButton.addEventListener('mouseout', () => {
+    browseButton.style.backgroundColor = '#d00024';
+  });
+
+  // When clicked, trigger the function that shows the browse interface.
+  browseButton.addEventListener('click', () => {
+    // Assume app.showBrowseInterface is defined (as in our modified app.js)
+    if (app.showBrowseInterface) {
+      app.showBrowseInterface();
+    } else {
+      console.log("Browse interface is not available.");
+    }
+  });
+
   
   // ------------------------------
   // Create a Reset button.
@@ -223,8 +255,9 @@ export function setupUIControls(app) {
     }
   };
   
-  controlsContainer.appendChild(resetButton);
   controlsContainer.appendChild(fileInput);
+  controlsContainer.appendChild(browseButton);
+  controlsContainer.appendChild(resetButton);
   
   // ------------------------------
   // Create an extra pointer toggle button.

@@ -27,6 +27,7 @@ app.use(express.static('public'));
 // Serve files from the uploads folder.
 app.use('/uploads', express.static(uploadDir));
 
+
 // Configure Multer for file uploads, keeping the original filename.
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -78,6 +79,86 @@ app.post('/upload', upload.single('model'), (req, res) => {
   }
 
   res.json({ url: fileUrl, name: req.file.originalname });
+});
+
+// *** New endpoint: List uploaded GLB files ***
+app.get('/list-uploads', (req, res) => {
+  const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+  fs.readdir(uploadDir, (err, files) => {
+    if (err) {
+      console.error("Error reading uploads directory:", err);
+      return res.status(500).json({ error: "Failed to read uploads directory" });
+    }
+    const glbFiles = files.filter(file => file.endsWith('.glb') || file.endsWith('.gltf'))
+                          .map(file => {
+      return {
+        name: file,
+        url: `${baseUrl}/uploads/${file}`
+      };
+    });
+    res.json(glbFiles);
+  });
+});
+
+// File deletion endpoint
+app.delete('/delete-upload/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(uploadDir, filename);
+  
+  fs.access(filePath, fs.constants.F_OK, (err) => {
+    if (err) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    
+    fs.unlink(filePath, (err) => {
+      if (err) {
+        console.error("Error deleting file:", err);
+        return res.status(500).json({ error: "Failed to delete file" });
+      }
+      
+      console.log(`Deleted file: ${filename}`);
+      return res.status(200).json({ message: `File ${filename} deleted successfully` });
+    });
+  });
+});
+
+// Delete all uploads endpoint
+app.delete('/delete-all-uploads', (req, res) => {
+  fs.readdir(uploadDir, (err, files) => {
+    if (err) {
+      console.error("Error reading uploads directory:", err);
+      return res.status(500).json({ error: "Failed to read uploads directory" });
+    }
+    
+    if (files.length === 0) {
+      return res.status(200).json({ message: "No files to delete" });
+    }
+    
+    let deleteCount = 0;
+    let errorCount = 0;
+    
+    files.forEach(file => {
+      // Only delete GLB/GLTF files
+      if (file.endsWith('.glb') || file.endsWith('.gltf')) {
+        const filePath = path.join(uploadDir, file);
+        fs.unlink(filePath, (err) => {
+          if (err) {
+            console.error(`Error deleting file ${file}:`, err);
+            errorCount++;
+          } else {
+            deleteCount++;
+          }
+          
+          // Check if all files have been processed
+          if (deleteCount + errorCount === files.length) {
+            return res.status(200).json({ 
+              message: `Deleted ${deleteCount} files, failed to delete ${errorCount} files` 
+            });
+          }
+        });
+      }
+    });
+  });
 });
 
 // Socket communication.
@@ -218,7 +299,20 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+  socket.on('browse-selection', (data) => {
+    if (socket.id === hostSocketId) {
+      // Broadcast the host's selections to all clients
+      io.emit('product-upload-complete', {
+        parts: data.parts,
+        sender: socket.id
+      });
+    }
+  });
+
 });
+
+
 
 // Start the server.
 const PORT = process.env.PORT || 3000;

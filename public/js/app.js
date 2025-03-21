@@ -1,5 +1,3 @@
-// app.js
-
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -50,13 +48,9 @@ class App {
     this.createUploadOverlay();
 
     // Set up THREE.LoadingManager (progress updates are no longer displayed).
-    this.loadingManager = new THREE.LoadingManager(() => {
-      // No-op on load, hiding of the overlay will be handled in each flow.
-    });
-    this.loadingManager.onProgress = (url, loaded, total) => {
-      // No progress updates are shown.
-    };
-
+    this.loadingManager = new THREE.LoadingManager(() => {});
+    this.loadingManager.onProgress = (url, loaded, total) => {};
+    
     this.gltfLoader = new GLTFLoader(this.loadingManager);
     this.rgbeLoader = new RGBELoader(this.loadingManager);
 
@@ -78,13 +72,11 @@ class App {
         if (loadingOverlay) loadingOverlay.style.display = 'flex';
   
         const files = event.target.files;
-        // If no files were selected, cancel upload and do not clear existing models.
         if (!files || files.length === 0) {
           if (loadingOverlay) loadingOverlay.style.display = 'none';
           return;
         }
   
-        // Now safely clear out any existing models ONLY when files are selected.
         this.clearExistingModels();
   
         for (let file of files) {
@@ -101,7 +93,6 @@ class App {
             });
             if (response.ok) {
               const data = await response.json();
-              // For hosts: skip local load and wait for aggregated broadcast.
               if (!this.isHost) {
                 const name = data.name.replace('.glb', '').replace('.gltf', '');
                 await this.loadModel(data.url, name);
@@ -127,9 +118,8 @@ class App {
         }
       };
     }
-    // ------------------------------------------------------------------------------
 
-    // Set up socket communication
+    // Set up socket communication.
     this.setupSocketListeners();
 
     // Create an InteractionManager instance.
@@ -158,7 +148,7 @@ class App {
   }
 
   // -----------------------------------------------------------------------------
-  // Landing Overlay – choose Demo or Upload
+  // Landing Overlay – Demo / Upload / Browse Options
   // -----------------------------------------------------------------------------
   showLandingOverlay() {
     const overlay = document.createElement('div');
@@ -189,23 +179,24 @@ class App {
     description.style.fontSize = '14px';
     description.style.color = '#333';
     description.style.marginBottom = '20px';
-    description.innerHTML = 'Click the Demo button to view our sample, or Upload button to upload GLB files to view new ideas. Experience interactive product development like never before!<br><span style="font-size: 12px; font-weight: normal;">(pending name & content)</span>';
+    description.innerHTML = '<p> Click the Browse button to browse existing files, or Upload button to upload GLB files to view new ideas.</p> <p>Experience interactive product development like never before!</p> <p style="font-size: 12px;">(pending name &amp; content)</p>';
+    
     const buttonsContainer = document.createElement('div');
     buttonsContainer.style.display = 'flex';
     buttonsContainer.style.justifyContent = 'space-around';
 
-    const demoButton = document.createElement('button');
-    demoButton.textContent = 'Demo';
-    demoButton.style.backgroundColor = '#d00024';
-    demoButton.style.color = 'white';
-    demoButton.style.border = 'none';
-    demoButton.style.borderRadius = '9999px';
-    demoButton.style.padding = '10px 20px';
-    demoButton.style.cursor = 'pointer';
-    demoButton.addEventListener('click', () => {
-      document.body.removeChild(overlay);
-      this.loadDefaultProduct();
-    });
+    // const demoButton = document.createElement('button');
+    // demoButton.textContent = 'Demo';
+    // demoButton.style.backgroundColor = '#d00024';
+    // demoButton.style.color = 'white';
+    // demoButton.style.border = 'none';
+    // demoButton.style.borderRadius = '9999px';
+    // demoButton.style.padding = '10px 20px';
+    // demoButton.style.cursor = 'pointer';
+    // demoButton.addEventListener('click', () => {
+    //   document.body.removeChild(overlay);
+    //   this.loadDefaultProduct();
+    // });
 
     const uploadButton = document.createElement('button');
     uploadButton.textContent = 'Upload';
@@ -217,20 +208,145 @@ class App {
     uploadButton.style.cursor = 'pointer';
     uploadButton.addEventListener('click', () => {
       document.body.removeChild(overlay);
-      // Trigger the file input from your UI controls.
       const fileInput = document.querySelector('input[type="file"][accept=".glb,.gltf"]');
       if (fileInput) {
         fileInput.click();
       }
     });
+    
+    const browseButton = document.createElement('button');
+    browseButton.textContent = 'Browse';
+    browseButton.style.backgroundColor = '#d00024';
+    browseButton.style.color = 'white';
+    browseButton.style.border = 'none';
+    browseButton.style.borderRadius = '9999px';
+    browseButton.style.padding = '10px 20px';
+    browseButton.style.cursor = 'pointer';
+    browseButton.addEventListener('click', () => {
+      document.body.removeChild(overlay);
+      this.showBrowseInterface();
+    });
 
-    buttonsContainer.appendChild(demoButton);
+    // buttonsContainer.appendChild(demoButton);
+    buttonsContainer.appendChild(browseButton);
     buttonsContainer.appendChild(uploadButton);
     box.appendChild(title);
     box.appendChild(description);
     box.appendChild(buttonsContainer);
     overlay.appendChild(box);
     document.body.appendChild(overlay);
+  }
+
+  // -----------------------------------------------------------------------------
+  // Browse Interface – Fetch and let the user select uploaded GLB files.
+  // -----------------------------------------------------------------------------
+  async showBrowseInterface() {
+    try {
+      const response = await fetch('/list-uploads');
+      const files = await response.json();
+      const modalOverlay = document.createElement('div');
+      modalOverlay.style.position = 'fixed';
+      modalOverlay.style.top = '0';
+      modalOverlay.style.left = '0';
+      modalOverlay.style.width = '100%';
+      modalOverlay.style.height = '100%';
+      modalOverlay.style.backgroundColor = 'rgba(0,0,0,0.5)';
+      modalOverlay.style.display = 'flex';
+      modalOverlay.style.alignItems = 'center';
+      modalOverlay.style.justifyContent = 'center';
+      modalOverlay.style.zIndex = '10000';
+      
+      const modalContainer = document.createElement('div');
+      modalContainer.style.backgroundColor = 'white';
+      modalContainer.style.padding = '20px';
+      modalContainer.style.borderRadius = '8px';
+      modalContainer.style.minWidth = '300px';
+      modalContainer.style.maxHeight = '80%';
+      modalContainer.style.overflowY = 'auto';
+      
+      const title = document.createElement('h2');
+      title.textContent = 'Browse Uploaded Models';
+      modalContainer.appendChild(title);
+
+      const description = document.createElement('p');
+      description.textContent = 'To view the full product, ensure all parts are selected if it has multiple components.';
+      modalContainer.appendChild(description);
+      
+      const fileList = document.createElement('div');
+      fileList.style.marginTop = '10px';
+      files.forEach(file => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '5px';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = file.url;
+        checkbox.id = file.name;
+        const label = document.createElement('label');
+        label.htmlFor = file.name;
+        label.textContent = file.name;
+        label.style.marginLeft = '5px';
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        fileList.appendChild(div);
+      });
+      modalContainer.appendChild(fileList);
+      
+      const buttonsDiv = document.createElement('div');
+      buttonsDiv.style.marginTop = '20px';
+      buttonsDiv.style.textAlign = 'right';
+      
+      const loadButton = document.createElement('button');
+      loadButton.textContent = 'Load Selected';
+      loadButton.style.marginLeft = '10px';
+      loadButton.style.padding = '8px 16px';
+      loadButton.style.border = 'none';
+      loadButton.style.borderRadius = '9999px';
+      loadButton.style.background = '#d00024';
+      loadButton.style.color = 'white';
+      loadButton.style.cursor = 'pointer';
+      
+      const cancelButton = document.createElement('button');
+      cancelButton.textContent = 'Cancel';
+      cancelButton.style.padding = '8px 16px';
+      cancelButton.style.border = 'none';
+      cancelButton.style.borderRadius = '9999px';
+      cancelButton.style.background = '#999';
+      cancelButton.style.color = 'white';
+      cancelButton.style.cursor = 'pointer';
+      
+      buttonsDiv.appendChild(cancelButton);
+      buttonsDiv.appendChild(loadButton);
+      modalContainer.appendChild(buttonsDiv);
+      modalOverlay.appendChild(modalContainer);
+      document.body.appendChild(modalOverlay);
+      
+      loadButton.addEventListener('click', async () => {
+        const selected = [];
+        fileList.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+          selected.push({ url: cb.value, name: cb.id });
+        });
+        if(selected.length > 0) {
+          this.clearExistingModels();
+          for(const file of selected) {
+            await this.loadModel(file.url, file.name);
+          }
+          this.fitCameraToScene();
+          
+          // Add this broadcast for the host
+          if (this.isHost) {
+            // Broadcast the selected models to all clients
+            this.socket.emit('browse-selection', { parts: selected });
+          }
+        }
+        document.body.removeChild(modalOverlay);
+      });
+    
+    cancelButton.addEventListener('click', () => {
+        document.body.removeChild(modalOverlay);
+      });
+    } catch (error) {
+      console.error("Error fetching uploaded models:", error);
+    }
   }
 
   // -----------------------------------------------------------------------------
@@ -280,7 +396,6 @@ class App {
   // Loading Overlay (for both demo and upload)
   // -----------------------------------------------------------------------------
   createLoadingOverlay() {
-    // Create the overlay if it doesn't exist.
     let overlay = document.getElementById('loading-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -316,7 +431,6 @@ class App {
       `;
       document.body.appendChild(overlay);
 
-      // Append the spinner animation style if not already present.
       if (!document.getElementById('loading-overlay-style')) {
         const style = document.createElement('style');
         style.id = 'loading-overlay-style';
@@ -370,7 +484,6 @@ class App {
     });
 
     this.socket.on('product-upload-complete', async (data) => {
-      // console.log("Received complete product upload:", data);
       this.showUploadOverlay();
       if (!this.isHost) {
         this.clearExistingModels();
@@ -451,7 +564,6 @@ class App {
     });
 
     this.socket.on('reset-all', (resetAll) => {
-      // Reset the transformation of all parts.
       if (this.productGroup) {
         this.productGroup.children.forEach((child) => {
           child.position.set(0, 0, 0);
@@ -463,7 +575,6 @@ class App {
           }
         });
       }
-      // Reset the camera/viewport to its initial state.
       if (typeof this.fitCameraToScene === 'function') {
         this.fitCameraToScene();
       }
@@ -508,7 +619,7 @@ class App {
   setupScene() {
     this.scene.background = new THREE.Color(0xcccccc);
     this.rgbeLoader.load(
-      'https://raw.githubusercontent.com/kool-ltd/product-viewer/main/assets/brown_photostudio_02_4k.hdr',
+      '../assets/brown_photostudio_02_4k.hdr',
       (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         this.scene.environment = texture;
@@ -526,15 +637,15 @@ class App {
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.2);
     directionalLight.position.set(5, 5, 5);
     this.scene.add(directionalLight);
-
     window.sceneLight = {
-        ambient: ambientLight,
-        directional: directionalLight
+      ambient: ambientLight,
+      directional: directionalLight
     };
   }
 
   setupInitialControls() {
     this.orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.orbitControls.rotateSpeed = 0.5;
     this.orbitControls.enableDamping = true;
     this.orbitControls.dampingFactor = 0.05;
     this.orbitControls.addEventListener('change', () => {
@@ -602,17 +713,11 @@ class App {
     }
   }
 
-  // -----------------------------------------------------------------------------
-  // Model Loading & Default Product Setup (Demo)
-  // -----------------------------------------------------------------------------
   async loadDefaultProduct() {
-    // Show the loading overlay before starting model loading.
     const loadingOverlay = document.getElementById('loading-overlay');
     if (loadingOverlay) {
       loadingOverlay.style.display = 'flex';
     }
-
-    // Clear existing models.
     this.clearExistingModels();
     const parts = [
       { name: 'blade', file: 'kool-mandoline-blade.glb' },
@@ -621,7 +726,6 @@ class App {
       { name: 'handle', file: 'kool-mandoline-handletpe.glb' }
     ];
     
-    // Load each part sequentially.
     for (const part of parts) {
       await new Promise((resolve, reject) => {
         this.gltfLoader.load(
@@ -652,7 +756,9 @@ class App {
             this.productGroup.add(container);
             this.loadedModels.set(part.name, container);
             this.updateDragControls();
-            this.interactionManager.setDraggableObjects(Array.from(this.loadedModels.values()));
+            if (this.interactionManager) {
+              this.interactionManager.setDraggableObjects(Array.from(this.loadedModels.values()));
+            }
             this.fitCameraToScene();
 
             if (this.isHost) {
@@ -668,15 +774,11 @@ class App {
         );
       });
     }
-    // Hide the loading overlay once all parts are loaded and camera fitted.
     if (loadingOverlay) {
       loadingOverlay.style.display = 'none';
     }
   }
 
-  // -----------------------------------------------------------------------------
-  // Modified fitCameraToScene for an angled (isometric-like/perspective) view.
-  // -----------------------------------------------------------------------------
   fitCameraToScene() {
     const box = new THREE.Box3().setFromObject(this.productGroup);
     const center = box.getCenter(new THREE.Vector3());
@@ -686,11 +788,10 @@ class App {
     let distance = Math.abs(maxDim / Math.tan(fovRadians / 2));
     distance *= 1.2;
     
-    // Offset the camera to achieve an angled view (45° in x-z plane with a vertical offset)
-    const offsetAngle = Math.PI / 4; // 45° angle for x-z offset
+    const offsetAngle = Math.PI / 4;
     const xOffset = distance * Math.cos(offsetAngle);
     const zOffset = distance * Math.sin(offsetAngle);
-    const yOffset = distance * 0.5;  // Adjust elevation as needed
+    const yOffset = distance * 0.5;
     
     this.camera.position.set(center.x + xOffset, center.y + yOffset, center.z + zOffset);
     this.orbitControls.target.copy(center);
@@ -698,9 +799,6 @@ class App {
     this.orbitControls.update();
   }
 
-  // -----------------------------------------------------------------------------
-  // Model Loading (for external calls, e.g., from socket events)
-  // -----------------------------------------------------------------------------
   async loadModel(url, name) {
     return new Promise((resolve, reject) => {
       this.gltfLoader.load(
@@ -731,7 +829,9 @@ class App {
           this.productGroup.add(container);
           this.loadedModels.set(name, container);
           this.updateDragControls();
-          this.interactionManager.setDraggableObjects(Array.from(this.loadedModels.values()));
+          if (this.interactionManager) {
+            this.interactionManager.setDraggableObjects(Array.from(this.loadedModels.values()));
+          }
           this.fitCameraToScene();
           console.log(`Loaded model: ${name}`);
           if (this.isHost) {
@@ -739,9 +839,7 @@ class App {
           }
           resolve(container);
         },
-        xhr => {
-          // console.log(`${name} ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-        },
+        xhr => {},
         error => {
           console.error(`Error loading model ${name}:`, error);
           reject(error);
@@ -750,24 +848,8 @@ class App {
     });
   }
 
-  // -----------------------------------------------------------------------------
-  // Main Animation Loop
-  // -----------------------------------------------------------------------------
   animate() {
     this.renderer.setAnimationLoop((time, frame) => {
-    //   // --- Depth Occlusion Update (Experimental) ---
-    //   if (this.isARMode && frame) {
-    //     const session = frame.session;
-    //     const referenceSpace = this.renderer.xr.getReferenceSpace();
-    //     if (session.renderState.baseLayer) {
-    //       const baseLayer = session.renderState.baseLayer;
-    //       const depthData = frame.getDepthInformation(baseLayer);
-    //       if (depthData) {
-    //         console.log("Depth Data (app.js) Available:", depthData.width, depthData.height);
-    //         // Here you could update a THREE.DataTexture with depthData.data to use in your occlusion shader.
-    //       }
-    //     }
-    //   }
       // AR Tap-to-Place Reticle Update (version 2)
       if (this.isARMode && this.isPlacingProduct && this.hitTestSource && frame) {
         const referenceSpace = this.renderer.xr.getReferenceSpace();
@@ -813,82 +895,10 @@ class App {
       if (!this.isDragging) {
         this.orbitControls.update();
       }
-      this.interactionManager.update();
+      if (this.interactionManager) {
+        this.interactionManager.update();
+      }
       this.renderer.render(this.scene, this.camera);
-    });
-  }
-
-  // -----------------------------------------------------------------------------
-  // AR Tap-to-Place Integration (version 2)
-  // -----------------------------------------------------------------------------
-  createPlacementUI() {
-    // Create a group to hold the reticle elements.
-    this.placementReticle = new THREE.Group();
-  
-    // Scale the reticle down to half its size.
-    this.placementReticle.scale.set(0.3, 0.3, 0.3);
-  
-    // Reticle ring.
-    const ringGeometry = new THREE.RingGeometry(0.15, 0.2, 32);
-    const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
-    const reticleRing = new THREE.Mesh(ringGeometry, ringMaterial);
-    reticleRing.rotation.x = -Math.PI / 2;
-    this.placementReticle.add(reticleRing);
-  
-    // A small dot at the center.
-    const dotGeometry = new THREE.CircleGeometry(0.05, 32);
-    const dotMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
-    const reticleDot = new THREE.Mesh(dotGeometry, dotMaterial);
-    reticleDot.rotation.x = -Math.PI / 2;
-    this.placementReticle.add(reticleDot);
-  
-    this.placementReticle.visible = false;
-    this.scene.add(this.placementReticle);
-  
-    // Create an overlay message for tap-to-place
-    this.placementMessage = document.createElement('div');
-    this.placementMessage.style.position = 'absolute';
-    this.placementMessage.style.bottom = '100px';
-    this.placementMessage.style.left = '50%';
-    this.placementMessage.style.transform = 'translateX(-50%)';
-    this.placementMessage.style.fontSize = '20px';
-    this.placementMessage.style.color = 'white';
-    this.placementMessage.style.zIndex = '10000';
-    this.placementMessage.innerText = 'Please tap to place';
-    this.placementMessage.style.display = 'none';
-    document.body.appendChild(this.placementMessage);
-  
-    // Create the "Place Again" button.
-    this.placeAgainButton = document.createElement('button');
-    this.placeAgainButton.textContent = 'Place Again';
-    this.placeAgainButton.style.position = 'absolute';
-    this.placeAgainButton.style.bottom = '80px';
-    this.placeAgainButton.style.left = '50%';
-    this.placeAgainButton.style.transform = 'translateX(-50%)';
-    this.placeAgainButton.style.padding = '8px 16px';
-    this.placeAgainButton.style.border = 'none';
-    this.placeAgainButton.style.borderRadius = '4px';
-    this.placeAgainButton.style.background = '#fff';
-    this.placeAgainButton.style.color = '#000';
-    this.placeAgainButton.style.fontSize = '13px';
-    this.placeAgainButton.style.cursor = 'pointer';
-    this.placeAgainButton.style.zIndex = '10000';
-    this.placeAgainButton.style.display = 'none';
-    document.body.appendChild(this.placeAgainButton);
-  
-    // "Place Again" click handler.
-    this.placeAgainButton.addEventListener('click', () => {
-      if (this.productGroup) {
-        this.productGroup.visible = false;
-      }
-      this.isPlacingProduct = true;
-      this.placementMessage.style.display = 'block';
-      this.placeAgainButton.style.display = 'none';
-      const session = this.renderer.xr.getSession();
-      if (session) {
-        this.onSelectEventBound = this.onSelectEvent.bind(this);
-        session.addEventListener('select', this.onSelectEventBound);
-      }
     });
   }
 
@@ -923,6 +933,69 @@ class App {
     });
   }
 
+  createPlacementUI() {
+    this.placementReticle = new THREE.Group();
+    this.placementReticle.scale.set(0.3, 0.3, 0.3);
+  
+    const ringGeometry = new THREE.RingGeometry(0.15, 0.2, 32);
+    const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
+    const reticleRing = new THREE.Mesh(ringGeometry, ringMaterial);
+    reticleRing.rotation.x = -Math.PI / 2;
+    this.placementReticle.add(reticleRing);
+  
+    const dotGeometry = new THREE.CircleGeometry(0.05, 32);
+    const dotMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
+    const reticleDot = new THREE.Mesh(dotGeometry, dotMaterial);
+    reticleDot.rotation.x = -Math.PI / 2;
+    this.placementReticle.add(reticleDot);
+  
+    this.placementReticle.visible = false;
+    this.scene.add(this.placementReticle);
+  
+    this.placementMessage = document.createElement('div');
+    this.placementMessage.style.position = 'absolute';
+    this.placementMessage.style.bottom = '100px';
+    this.placementMessage.style.left = '50%';
+    this.placementMessage.style.transform = 'translateX(-50%)';
+    this.placementMessage.style.fontSize = '20px';
+    this.placementMessage.style.color = 'white';
+    this.placementMessage.style.zIndex = '10000';
+    this.placementMessage.innerText = 'Please tap to place';
+    this.placementMessage.style.display = 'none';
+    document.body.appendChild(this.placementMessage);
+  
+    this.placeAgainButton = document.createElement('button');
+    this.placeAgainButton.textContent = 'Place Again';
+    this.placeAgainButton.style.position = 'absolute';
+    this.placeAgainButton.style.bottom = '80px';
+    this.placeAgainButton.style.left = '50%';
+    this.placeAgainButton.style.transform = 'translateX(-50%)';
+    this.placeAgainButton.style.padding = '8px 16px';
+    this.placeAgainButton.style.border = 'none';
+    this.placeAgainButton.style.borderRadius = '4px';
+    this.placeAgainButton.style.background = '#fff';
+    this.placeAgainButton.style.color = '#000';
+    this.placeAgainButton.style.fontSize = '13px';
+    this.placeAgainButton.style.cursor = 'pointer';
+    this.placeAgainButton.style.zIndex = '10000';
+    this.placeAgainButton.style.display = 'none';
+    document.body.appendChild(this.placeAgainButton);
+  
+    this.placeAgainButton.addEventListener('click', () => {
+      if (this.productGroup) {
+        this.productGroup.visible = false;
+      }
+      this.isPlacingProduct = true;
+      this.placementMessage.style.display = 'block';
+      this.placeAgainButton.style.display = 'none';
+      const session = this.renderer.xr.getSession();
+      if (session) {
+        this.onSelectEventBound = this.onSelectEvent.bind(this);
+        session.addEventListener('select', this.onSelectEventBound);
+      }
+    });
+  }
+
   onSelectEvent(event) {
     if (this.isPlacingProduct && this.hitTestSource) {
       const frame = event.frame;
@@ -932,12 +1005,9 @@ class App {
         const hit = hitTestResults[0];
         const pose = hit.getPose(referenceSpace);
   
-        // Compute the bounding box of the productGroup (which holds the model)
         const bbox = new THREE.Box3().setFromObject(this.productGroup);
-        // Calculate the offset from the group's local origin to its bottom (min.y)
         const offsetY = bbox.min.y;
   
-        // Adjust the position so that the bottom of the model touches the platform
         this.productGroup.visible = true;
         this.productGroup.position.set(
           pose.transform.position.x,
@@ -988,6 +1058,75 @@ class App {
   }
 }
 
+// Create global file management utilities
+window.FileManager = {
+  // List all uploaded files
+  listFiles: function() {
+    return fetch('/list-uploads')
+      .then(response => response.json())
+      .then(files => {
+        console.log("=== Uploaded Files ===");
+        if (files.length === 0) {
+          console.log("No files found");
+        } else {
+          files.forEach(file => console.log(file.name));
+        }
+        return files;
+      })
+      .catch(error => {
+        console.error("Error listing files:", error);
+      });
+  },
+  
+  // Delete a specific file
+  deleteFile: function(filename) {
+    return fetch(`/delete-upload/${filename}`, {
+      method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+      console.log(data.message || data.error);
+      return data;
+    })
+    .catch(error => {
+      console.error("Error deleting file:", error);
+    });
+  },
+  
+  // Delete all uploaded files
+  deleteAllFiles: function() {
+    if (!confirm("Are you sure you want to delete ALL uploaded files?")) {
+      console.log("Operation cancelled");
+      return Promise.resolve({message: "Operation cancelled"});
+    }
+    
+    return fetch('/delete-all-uploads', {
+      method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+      console.log(data.message || data.error);
+      return data;
+    })
+    .catch(error => {
+      console.error("Error deleting files:", error);
+    });
+  },
+  
+  // Help function to show available commands
+  help: function() {
+    console.log(`
+=== File Manager Commands ===
+FileManager.listFiles() - List all uploaded files
+FileManager.deleteFile("filename.glb") - Delete a specific file
+FileManager.deleteAllFiles() - Delete all uploaded files
+FileManager.help() - Show this help information
+    `);
+  }
+};
+
+// Show help info when initialized
+console.log("File Manager utilities loaded. Type FileManager.help() for available commands.");
 
 const app = new App();
 export default app;

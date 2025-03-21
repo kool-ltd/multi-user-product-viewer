@@ -50,6 +50,7 @@ export class InteractionManager {
 
     setupOrbitControls() {
         this.orbitControls = new OrbitControls(this.camera, this.domElement);
+        this.orbitControls.rotateSpeed = 0.01;
         this.orbitControls.enableDamping = true;
         this.orbitControls.dampingFactor = 0.05;
     }
